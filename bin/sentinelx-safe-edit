@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+import shlex
+
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def write_text(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+
+
+def run_cmd(cmd: str, env=None) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, shell=True, text=True, capture_output=True, env=env)
+
+
+def ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def copy_metadata(src: Path, dst: Path) -> None:
+    shutil.copystat(src, dst, follow_symlinks=False)
+    try:
+        st = src.stat()
+        os.chown(dst, st.st_uid, st.st_gid)
+    except PermissionError:
+        pass
+
+
+def make_backup(src: Path, backup_dir: Path | None) -> Path:
+    ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    base_dir = backup_dir if backup_dir else src.parent
+    base_dir.mkdir(parents=True, exist_ok=True)
+    backup = base_dir / f"{src.name}.bak.{ts}"
+    shutil.copy2(src, backup)
+    return backup
+
+
+def replace_text_once(content: str, old: str, new: str, count: int) -> tuple[str, int]:
+    if count == 0:
+        occurrences = content.count(old)
+        if occurrences == 0:
+            raise ValueError("Texto objetivo no encontrado")
+        return content.replace(old, new), occurrences
+    occurrences = content.count(old)
+    if occurrences < count:
+        raise ValueError(f"Coincidencias insuficientes: {occurrences} < {count}")
+    return content.replace(old, new, count), min(occurrences, count)
+
+
+def replace_regex(content: str, pattern: str, repl: str, count: int, flags: int) -> tuple[str, int]:
+    new_content, n = re.subn(pattern, repl, content, count=count, flags=flags)
+    if n == 0:
+        raise ValueError("Regex no encontró coincidencias")
+    return new_content, n
+
+
+def replace_block(content: str, start: str, end: str, new_block: str) -> tuple[str, int]:
+    s = content.find(start)
+    if s == -1:
+        raise ValueError("Marcador de inicio no encontrado")
+    e = content.find(end, s + len(start))
+    if e == -1:
+        raise ValueError("Marcador de fin no encontrado")
+    e += len(end)
+    return content[:s] + new_block + content[e:], 1
+
+
+def load_value(inline: str | None, file_path: str | None, empty_ok: bool = True) -> str:
+    if inline is not None and file_path is not None:
+        raise ValueError("No puedes usar valor inline y archivo a la vez")
+    if file_path is not None:
+        return Path(file_path).read_text(encoding="utf-8")
+    if inline is None:
+        if empty_ok:
+            return ""
+        raise ValueError("Falta valor requerido")
+    return inline
+
+
+def interpret_escapes(value: str) -> str:
+    return bytes(value, "utf-8").decode("unicode_escape")
+
+
+def yaml_validation_cmd(target: Path) -> str:
+    q = shlex.quote(str(target))
+    return (
+        "python3 -c \"import sys; from pathlib import Path; "
+        "import yaml; yaml.safe_load(Path(sys.argv[1]).read_text(encoding='utf-8'))\" "
+        f"{q}"
+    )
+
+
+def build_validator_preset(preset: str, target: Path) -> str:
+    presets = {
+        "nginx": "sudo nginx -t -c /etc/nginx/nginx.conf",
+        "json": "python3 -m json.tool {file} > /dev/null",
+        "python": "python3 -m py_compile {file}",
+        "sh": "bash -n {file}",
+        "systemd": "systemd-analyze verify {file}",
+    }
+    if preset == "yaml":
+        return yaml_validation_cmd(target)
+    if preset not in presets:
+        raise ValueError(f"Validator preset no soportado: {preset}")
+    return presets[preset].replace("{file}", shlex.quote(str(target)))
+
+
+def build_validator(cmd: str | None, preset: str | None, target: Path) -> str | None:
+    if cmd and preset:
+        raise ValueError("No puedes usar --validator y --validator-preset juntos")
+    if preset:
+        return build_validator_preset(preset, target)
+    if not cmd:
+        return None
+    return cmd.replace("{file}", str(target))
+
+
+def show_diff(src: Path, dst: Path) -> None:
+    diff = subprocess.run(["diff", "-u", str(src), str(dst)], text=True, capture_output=True)
+    if diff.stdout:
+        print(diff.stdout)
+
+
+def restore_backup(target: Path, backup_path: Path, backup_dir: Path | None, show_changes: bool, dry_run: bool) -> int:
+    if not backup_path.exists():
+        eprint("ERROR: el backup indicado no existe")
+        return 2
+    if not backup_path.is_file():
+        eprint("ERROR: el backup indicado no es un archivo regular")
+        return 2
+
+    fd, tmp_name = tempfile.mkstemp(prefix=target.name + ".", dir=str(target.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        shutil.copy2(backup_path, tmp_path)
+        if target.exists():
+            copy_metadata(target, tmp_path)
+        if show_changes and target.exists():
+            show_diff(target, tmp_path)
+        if dry_run:
+            print(f"DRY-RUN: restauracion simulada sobre {target}")
+            print(f"SOURCE_BACKUP: {backup_path}")
+            return 0
+        previous_backup = None
+        if target.exists():
+            previous_backup = make_backup(target, backup_dir)
+        os.replace(tmp_path, target)
+        print(f"OK: restaurado {target}")
+        print(f"SOURCE_BACKUP: {backup_path}")
+        if previous_backup:
+            print(f"BACKUP_BEFORE_RESTORE: {previous_backup}")
+        return 0
+    except Exception as exc:
+        eprint(f"ERROR: fallo restaurando backup: {exc}")
+        return 5
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Edicion segura y atomica para archivos grandes")
+    parser.add_argument("path", help="Archivo a editar o restaurar")
+    parser.add_argument("--mode", choices=["replace", "regex", "replace-block", "append", "prepend", "write"], help="Modo de edicion")
+    parser.add_argument("--restore", help="Restaura desde un backup existente")
+    parser.add_argument("--old", help="Texto a reemplazar")
+    parser.add_argument("--old-file", help="Archivo con texto a reemplazar")
+    parser.add_argument("--new", help="Texto nuevo")
+    parser.add_argument("--new-file", help="Archivo con texto nuevo")
+    parser.add_argument("--pattern", help="Regex a reemplazar")
+    parser.add_argument("--start-marker", help="Marcador inicial de bloque")
+    parser.add_argument("--end-marker", help="Marcador final de bloque")
+    parser.add_argument("--count", type=int, default=0, help="Cantidad de reemplazos (0 = todos)")
+    parser.add_argument("--multiline", action="store_true", help="Regex multilinea")
+    parser.add_argument("--dotall", action="store_true", help="Regex dotall")
+    parser.add_argument("--interpret-escapes", action="store_true", help="Interpreta secuencias como \\n, \\t y Unicode en --old/--new")
+    parser.add_argument("--backup-dir", help="Directorio de backups")
+    parser.add_argument("--validator", help="Comando de validacion. Usa {file} como placeholder")
+    parser.add_argument("--validator-preset", choices=["nginx", "json", "python", "sh", "yaml", "systemd"], help="Validador predefinido")
+    parser.add_argument("--diff", action="store_true", help="Mostrar diff resumido")
+    parser.add_argument("--dry-run", action="store_true", help="Simula el cambio sin escribir el archivo final")
+    parser.add_argument("--allow-no-change", action="store_true", help="No fallar si el contenido final es igual")
+    parser.add_argument("--create", action="store_true", help="Crear archivo si no existe")
+    args = parser.parse_args()
+
+    target = Path(args.path)
+    ensure_parent(target)
+    backup_dir = Path(args.backup_dir) if args.backup_dir else None
+
+    if args.restore and args.mode:
+        eprint("ERROR: no puedes usar --restore y --mode juntos")
+        return 2
+    if not args.restore and not args.mode:
+        eprint("ERROR: debes indicar --mode o --restore")
+        return 2
+
+    if args.restore:
+        return restore_backup(target, Path(args.restore), backup_dir, args.diff, args.dry_run)
+
+    if not target.exists():
+        if args.create:
+            target.touch()
+        else:
+            eprint("ERROR: el archivo no existe; usa --create para crearlo")
+            return 2
+
+    original = read_text(target)
+    new_value = load_value(args.new, args.new_file)
+
+    try:
+        if args.mode == "replace":
+            old_value = load_value(args.old, args.old_file, empty_ok=False)
+            if args.interpret_escapes:
+                old_value = interpret_escapes(old_value)
+                new_value = interpret_escapes(new_value)
+            updated, changed = replace_text_once(original, old_value, new_value, args.count)
+        elif args.mode == "regex":
+            if not args.pattern:
+                raise ValueError("Falta --pattern")
+            if args.interpret_escapes:
+                new_value = interpret_escapes(new_value)
+            flags = 0
+            if args.multiline:
+                flags |= re.MULTILINE
+            if args.dotall:
+                flags |= re.DOTALL
+            updated, changed = replace_regex(original, args.pattern, new_value, args.count, flags)
+        elif args.mode == "replace-block":
+            if not args.start_marker or not args.end_marker:
+                raise ValueError("Faltan --start-marker y/o --end-marker")
+            if args.interpret_escapes:
+                new_value = interpret_escapes(new_value)
+            updated, changed = replace_block(original, args.start_marker, args.end_marker, new_value)
+        elif args.mode == "append":
+            if args.interpret_escapes:
+                new_value = interpret_escapes(new_value)
+            updated = original + new_value
+            changed = 1 if new_value else 0
+        elif args.mode == "prepend":
+            if args.interpret_escapes:
+                new_value = interpret_escapes(new_value)
+            updated = new_value + original
+            changed = 1 if new_value else 0
+        elif args.mode == "write":
+            if args.interpret_escapes:
+                new_value = interpret_escapes(new_value)
+            updated = new_value
+            changed = 1
+        else:
+            raise ValueError("Modo no soportado")
+    except ValueError as exc:
+        eprint(f"ERROR: {exc}")
+        return 2
+
+    if updated == original and not args.allow_no_change:
+        eprint("ERROR: no hubo cambios efectivos")
+        return 3
+
+    fd, tmp_name = tempfile.mkstemp(prefix=target.name + ".", dir=str(target.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+
+    try:
+        write_text(tmp_path, updated)
+        copy_metadata(target, tmp_path)
+
+        validator_cmd = build_validator(args.validator, args.validator_preset, tmp_path)
+        if validator_cmd:
+            result = run_cmd(validator_cmd)
+            if result.returncode != 0:
+                eprint("ERROR: validacion fallida")
+                if result.stdout:
+                    eprint(result.stdout.strip())
+                if result.stderr:
+                    eprint(result.stderr.strip())
+                return 4
+
+        if args.diff:
+            show_diff(target, tmp_path)
+
+        if args.dry_run:
+            print(f"DRY-RUN: cambio simulado sobre {target}")
+            print(f"CHANGES: {changed}")
+            if validator_cmd:
+                print(f"VALIDATOR: {validator_cmd}")
+            return 0
+
+        backup = make_backup(target, backup_dir)
+        os.replace(tmp_path, target)
+        print(f"OK: editado {target}")
+        print(f"BACKUP: {backup}")
+        print(f"CHANGES: {changed}")
+        if validator_cmd:
+            print(f"VALIDATOR: {validator_cmd}")
+        return 0
+    except Exception as exc:
+        eprint(f"ERROR: fallo editando archivo: {exc}")
+        return 5
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
