@@ -267,6 +267,92 @@ That means:
 - editing files owned by another user if `sentinelx` has no write permission
 - replacing content inside protected system paths such as many files under `/etc`
 
+## Manual service user and sudoers setup
+
+The installer already creates the `sentinelx` user and the required directories.
+
+This section is useful when you want to prepare the system manually, audit the expected setup, or reproduce the same layout yourself.
+
+### Create the service user
+
+```bash
+sudo useradd --system --home /var/lib/sentinelx --shell /usr/sbin/nologin sentinelx
+```
+
+If the user already exists, this command is not needed.
+
+### Create required directories
+
+```bash
+sudo mkdir -p /opt/sentinelx
+sudo mkdir -p /etc/sentinelx
+sudo mkdir -p /var/lib/sentinelx/uploads
+sudo mkdir -p /var/log/sentinelx
+```
+
+### Set ownership for runtime paths
+
+```bash
+sudo chown -R sentinelx:sentinelx /opt/sentinelx
+sudo chown -R sentinelx:sentinelx /var/lib/sentinelx
+sudo chown -R sentinelx:sentinelx /var/log/sentinelx
+```
+
+### Verify binary paths before writing sudoers rules
+
+```bash
+which systemctl
+which nginx
+which sudo
+```
+
+### Create a minimal sudoers file
+
+Use `visudo` when possible:
+
+```bash
+sudo visudo -f /etc/sudoers.d/sentinelx-core
+```
+
+Example content:
+
+```sudoers
+Cmnd_Alias SENTINELX_SYSTEMD = /bin/systemctl status nginx, /bin/systemctl restart nginx, /bin/systemctl reload nginx
+Cmnd_Alias SENTINELX_NGINX = /usr/sbin/nginx -t
+Cmnd_Alias SENTINELX_EDIT = /opt/sentinelx/bin/sentinelx-safe-edit
+
+sentinelx ALL=(root) NOPASSWD: SENTINELX_SYSTEMD, SENTINELX_NGINX, SENTINELX_EDIT
+```
+
+### Validate the sudoers file
+
+```bash
+sudo visudo -cf /etc/sudoers.d/sentinelx-core
+```
+
+### Fix sudoers file permissions
+
+```bash
+sudo chown root:root /etc/sudoers.d/sentinelx-core
+sudo chmod 440 /etc/sudoers.d/sentinelx-core
+```
+
+### Check what the service user can run
+
+```bash
+sudo -l -U sentinelx
+```
+
+### Important warning
+
+Do **not** use this as your public or default rule:
+
+```sudoers
+sentinelx ALL=(ALL) NOPASSWD: ALL
+```
+
+That grants full passwordless sudo and is too broad for the intended security model of SentinelX Core.
+
 ## Sudoers and protected files
 
 If you want SentinelX Core to support edits or commands over protected files, configure that explicitly through sudoers.
