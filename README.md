@@ -24,6 +24,7 @@ SentinelX Core is the generic, installable base of SentinelX. It is designed to 
 ├── examples/
 │   └── sentinelx.env.example
 ├── install.sh
+├── LICENSE
 ├── README.md
 ├── requirements.txt
 ├── run.sh
@@ -31,24 +32,51 @@ SentinelX Core is the generic, installable base of SentinelX. It is designed to 
     └── sentinelx.service
 ```
 
-## Local development
+## Quick start
 
-Local development defaults are intentionally different from the installed service defaults.
-
-The local `.env` is meant for development and testing from the repository itself. The installed example env under `examples/` is meant for a real server installation.
-
-### Run locally
+### Basic installation
 
 ```bash
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
-./run.sh
+git clone git@github.com:pensados/sentinelx-core.git
+cd sentinelx-core
+sudo bash install.sh
 ```
 
-Default local development port:
+That installs SentinelX Core into:
 
-```text
-8092
+- `/opt/sentinelx`
+- `/etc/sentinelx/sentinelx.env`
+- `/var/lib/sentinelx/uploads`
+- `/var/log/sentinelx`
+
+And creates the `systemd` service:
+
+- `sentinelx`
+
+### Edit the installed configuration
+
+```bash
+sudo nano /etc/sentinelx/sentinelx.env
+```
+
+Example minimal configuration:
+
+```env
+SENTINEL_TOKEN=tu_token_seguro
+AGENT_PORT=8091
+LOG_DIR=/var/log/sentinelx
+LOG_FILE=/var/log/sentinelx/sentinelx.log
+LOG_EXEC_FILE=/var/log/sentinelx/exec.log
+AGENT_NAME="SentinelX Core"
+SENTINEL_UPLOAD_DIR=/var/lib/sentinelx/uploads
+SENTINEL_SAFE_EDIT_BIN=/opt/sentinelx/bin/sentinelx-safe-edit
+```
+
+Then restart the service:
+
+```bash
+sudo systemctl restart sentinelx
+sudo systemctl status sentinelx
 ```
 
 ## Install on a server
@@ -84,6 +112,26 @@ sudo systemctl status sentinelx
 sudo journalctl -u sentinelx -n 100 --no-pager
 ```
 
+## Local development
+
+Local development defaults are intentionally different from the installed service defaults.
+
+The local `.env` is meant for development and testing from the repository itself. The installed example env under `examples/` is meant for a real server installation.
+
+### Run locally
+
+```bash
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+./run.sh
+```
+
+Default local development port:
+
+```text
+8092
+```
+
 ## Configuration
 
 Installed example environment file:
@@ -112,20 +160,20 @@ The service is expected to run locally and be called with a bearer token.
 ### State
 
 ```bash
-curl -H "Authorization: Bearer changeme" http://127.0.0.1:8091/state
+curl -H "Authorization: Bearer tu_token_seguro" http://127.0.0.1:8091/state
 ```
 
 ### Capabilities
 
 ```bash
-curl -s -H "Authorization: Bearer changeme" http://127.0.0.1:8091/capabilities | jq
+curl -s -H "Authorization: Bearer tu_token_seguro" http://127.0.0.1:8091/capabilities | jq
 ```
 
 ### Simple command execution
 
 ```bash
 curl -s -X POST http://127.0.0.1:8091/exec \
-  -H "Authorization: Bearer changeme" \
+  -H "Authorization: Bearer tu_token_seguro" \
   -H "Content-Type: application/json" \
   -d '{"cmd":"pwd"}'
 ```
@@ -155,7 +203,7 @@ Then edit it:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8091/edit \
-  -H "Authorization: Bearer changeme" \
+  -H "Authorization: Bearer tu_token_seguro" \
   -H "Content-Type: application/json" \
   -d '{
     "path":"/tmp/sentinelx-demo.txt",
@@ -177,6 +225,19 @@ Expected result:
 ```text
 hola sentinelx core editado
 ```
+
+## Functional installation checklist
+
+A practical first validation after installation is:
+
+1. install SentinelX Core with `sudo bash install.sh`
+2. set a real token in `/etc/sentinelx/sentinelx.env`
+3. restart the service
+4. verify `/state`
+5. verify `/capabilities`
+6. verify `/exec` with `pwd`
+7. verify `/edit` on a file owned by `sentinelx`
+8. only then decide whether you need privileged operations through sudoers
 
 ## Permissions model
 
@@ -224,11 +285,15 @@ Allow only the exact commands you intend to support, for example:
 - `nginx -t`
 - `sentinelx-safe-edit` for specific operational workflows
 
+### Example sudoers style approach
+
+The exact sudoers policy depends on your server, but the principle should be narrow. For example, prefer allowing only specific commands instead of broad root access.
+
 ### Example request with sudo enabled
 
 ```bash
 curl -s -X POST http://127.0.0.1:8091/edit \
-  -H "Authorization: Bearer changeme" \
+  -H "Authorization: Bearer tu_token_seguro" \
   -H "Content-Type: application/json" \
   -d '{
     "path":"/etc/nginx/sites-available/example.conf",
@@ -269,6 +334,27 @@ sudo tail -n 100 /var/log/sentinelx/sentinelx.log
 sudo tail -n 100 /var/log/sentinelx/exec.log
 sudo journalctl -u sentinelx -n 100 --no-pager
 ```
+
+## Troubleshooting
+
+### Service does not start
+
+```bash
+sudo systemctl status sentinelx
+sudo journalctl -u sentinelx -n 100 --no-pager
+```
+
+### Token works but `/edit` fails
+
+Most of the time this is a permissions issue on the target file or directory. First verify that the file is writable by the `sentinelx` user. If not, either adjust ownership/permissions or use a controlled sudoers setup.
+
+### `/exec` works but logs are empty
+
+Verify:
+
+- `/var/log/sentinelx` exists
+- ownership is correct for the `sentinelx` user
+- the environment file points to the expected log paths
 
 ## Current scope
 
