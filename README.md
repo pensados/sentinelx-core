@@ -269,7 +269,7 @@ That means:
 
 ## Sudoers and protected files
 
-If you want SentinelX Core to support edits or commands over protected files, document and configure that explicitly.
+If you want SentinelX Core to support edits or commands over protected files, configure that explicitly through sudoers.
 
 ### Recommendation
 
@@ -277,17 +277,60 @@ Use a **minimal and explicit** sudoers policy.
 
 Do **not** grant unrestricted sudo to the `sentinelx` service user.
 
-### Good principle
+### What not to do
 
-Allow only the exact commands you intend to support, for example:
+This kind of rule is too broad for a public installation guide:
+
+```sudoers
+sentinelx ALL=(ALL) NOPASSWD: ALL
+```
+
+It effectively gives the service full passwordless sudo and defeats the point of a narrow operational profile.
+
+### Better approach
+
+Allow only the exact commands you intend to support. For example:
 
 - `systemctl` for selected units
 - `nginx -t`
-- `sentinelx-safe-edit` for specific operational workflows
+- `systemctl reload nginx`
+- `systemctl restart nginx`
+- `sentinelx-safe-edit` for specific workflows
 
-### Example sudoers style approach
+### Example narrow sudoers patterns
 
-The exact sudoers policy depends on your server, but the principle should be narrow. For example, prefer allowing only specific commands instead of broad root access.
+These are examples, not one-size-fits-all defaults.
+
+```sudoers
+# Example: allow only selected service operations
+Cmnd_Alias SENTINELX_SYSTEMD = /bin/systemctl status nginx, /bin/systemctl restart nginx, /bin/systemctl reload nginx
+
+# Example: allow nginx config validation
+Cmnd_Alias SENTINELX_NGINX = /usr/sbin/nginx -t
+
+# Example: allow the internal edit helper
+Cmnd_Alias SENTINELX_EDIT = /opt/sentinelx/bin/sentinelx-safe-edit
+
+sentinelx ALL=(root) NOPASSWD: SENTINELX_SYSTEMD, SENTINELX_NGINX, SENTINELX_EDIT
+```
+
+On some systems, the command path may be `/usr/bin/systemctl` instead of `/bin/systemctl`. Verify real paths with:
+
+```bash
+which systemctl
+which nginx
+which sudo
+```
+
+### Why this matters
+
+In a real server, you may already have narrow rules for an operator user. For example, rules such as these are much more targeted than giving the service user full sudo:
+
+```sudoers
+carlos ALL=(root) NOPASSWD: /usr/bin/tee, /usr/bin/ln, /usr/bin/unlink, /usr/sbin/nginx, /usr/bin/systemctl reload nginx, /usr/bin/systemctl restart nginx
+```
+
+That kind of narrow rule is the right direction. By contrast, a blanket rule for `sentinelx` should not be used as the documented example.
 
 ### Example request with sudo enabled
 
@@ -318,6 +361,7 @@ When installing SentinelX Core on a real server, review all of these:
 - ownership of `/var/lib/sentinelx/uploads`
 - ownership of `/var/log/sentinelx`
 - ownership and permissions of target files you expect to edit without sudo
+- exact binary paths for commands referenced in sudoers
 - any sudoers rules required for protected operations
 
 ## Logging
