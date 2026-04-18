@@ -153,6 +153,8 @@ After editing the installed env file, reload the service:
 sudo systemctl restart sentinelx
 ```
 
+The installed examples use `8091` as the default port, but you should always use the port actually configured in `/etc/sentinelx/sentinelx.env`. On some servers, `8091` may already be used by another service.
+
 ## First API checks
 
 The service is expected to run locally and be called with a bearer token.
@@ -160,19 +162,19 @@ The service is expected to run locally and be called with a bearer token.
 ### State
 
 ```bash
-curl -H "Authorization: Bearer tu_token_seguro" http://127.0.0.1:8091/state
+curl -H "Authorization: Bearer tu_token_seguro" http://127.0.0.1:TU_PUERTO_CORE/state
 ```
 
 ### Capabilities
 
 ```bash
-curl -s -H "Authorization: Bearer tu_token_seguro" http://127.0.0.1:8091/capabilities | jq
+curl -s -H "Authorization: Bearer tu_token_seguro" http://127.0.0.1:TU_PUERTO_CORE/capabilities | jq
 ```
 
 ### Simple command execution
 
 ```bash
-curl -s -X POST http://127.0.0.1:8091/exec \
+curl -s -X POST http://127.0.0.1:TU_PUERTO_CORE/exec \
   -H "Authorization: Bearer tu_token_seguro" \
   -H "Content-Type: application/json" \
   -d '{"cmd":"pwd"}'
@@ -202,7 +204,7 @@ sudo chown sentinelx:sentinelx /tmp/sentinelx-demo.txt
 Then edit it:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8091/edit \
+curl -s -X POST http://127.0.0.1:TU_PUERTO_CORE/edit \
   -H "Authorization: Bearer tu_token_seguro" \
   -H "Content-Type: application/json" \
   -d '{
@@ -421,7 +423,7 @@ That kind of narrow rule is the right direction. By contrast, a blanket rule for
 ### Example request with sudo enabled
 
 ```bash
-curl -s -X POST http://127.0.0.1:8091/edit \
+curl -s -X POST http://127.0.0.1:TU_PUERTO_CORE/edit \
   -H "Authorization: Bearer tu_token_seguro" \
   -H "Content-Type: application/json" \
   -d '{
