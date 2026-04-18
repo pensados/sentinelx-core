@@ -39,7 +39,7 @@ User=${RUN_USER}
 Group=${RUN_USER}
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${CONFIG_DIR}/sentinelx.env
-ExecStart=${INSTALL_DIR}/venv/bin/uvicorn agent:app --host 127.0.0.1 --port \${AGENT_PORT:-8091}
+ExecStart=${INSTALL_DIR}/venv/bin/uvicorn agent:app --host 127.0.0.1 --port $AGENT_PORT
 Restart=always
 RestartSec=3
 
