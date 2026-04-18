@@ -32,7 +32,8 @@ fi
 cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=SentinelX Core
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=${RUN_USER}
