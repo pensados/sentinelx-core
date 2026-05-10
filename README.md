@@ -1,3 +1,17 @@
+> ## ⚠️ This repository is archived and no longer maintained
+>
+> SentinelX has evolved into a multi-host, hub-managed platform. Active
+> development happens at **[pensados/sentinelx-cloud-core](https://github.com/pensados/sentinelx-cloud-core)**
+> (Apache 2.0).
+>
+> This repo is the **original single-host SentinelX**: HTTP API, token auth,
+> no hub. It works, but receives no further updates. The license remains
+> MIT — forks are welcome to continue independently.
+>
+> Live product: **[sentinelx.pensa.ar](https://sentinelx.pensa.ar/)**
+
+---
+
 # SentinelX Core
 
 **Controlled server agent over HTTP. Command allowlist. Structured editing. Upload. Script execution. Service management.**
